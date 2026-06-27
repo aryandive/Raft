@@ -1,6 +1,6 @@
 "use client";
 
-import { Home, Wind, Shield, Activity, AlertTriangle, LogOut } from "lucide-react";
+import { Home, Wind, Shield, Activity, AlertTriangle, LogOut, BookOpen, TrendingUp, FileText } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
@@ -20,6 +20,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { label: "Grounding", href: "/dashboard/grounding", icon: <Wind size={20} /> },
     { label: "The Vault", href: "/dashboard/vault", icon: <Shield size={20} /> },
     { label: "Telemetry", href: "/dashboard/telemetry", icon: <Activity size={20} /> },
+    { label: "Curriculum", href: "/dashboard/curriculum", icon: <BookOpen size={20} /> },
+    { label: "Growth Matrix", href: "/dashboard/growth-matrix", icon: <TrendingUp size={20} /> },
+    { label: "Report", href: "/dashboard/report", icon: <FileText size={20} /> },
   ];
 
   return (

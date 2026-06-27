@@ -2,6 +2,7 @@
 
 const DB_NAME = 'RaftVaultDB';
 const STORE_NAME = 'crypto_keys';
+const DRAFTS_STORE = 'drafts';
 const KEY_ID = 'master_aes_key';
 
 /**
@@ -55,14 +56,17 @@ export async function importRecoveryKey(recoveryString: string): Promise<CryptoK
  * ==========================================
  */
 
-// Native IndexedDB Wrapper to save the CryptoKey
+// Native IndexedDB Wrapper to save the CryptoKey and drafts
 function openVaultDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, 2);
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
+      }
+      if (!db.objectStoreNames.contains(DRAFTS_STORE)) {
+        db.createObjectStore(DRAFTS_STORE);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -132,3 +136,59 @@ export async function decryptPayload(ciphertextBase64: string, ivBase64: string,
     throw new Error("Decryption failed. The data may be tampered with or the wrong key was used.");
   }
 }
+
+export async function generateMasterKey(): Promise<CryptoKey> {
+  return await window.crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"]
+  );
+}
+
+export async function exportKeyToBase64(key: CryptoKey): Promise<string> {
+  const exported = await window.crypto.subtle.exportKey("jwk", key);
+  return btoa(JSON.stringify(exported));
+}
+
+export async function storeLocalMasterKey(key: CryptoKey): Promise<void> {
+  await saveKeyToLocal(key);
+}
+
+/**
+ * ==========================================
+ * 4. SECURE LOCAL DRAFTS (Two-Tier Saving)
+ * ==========================================
+ */
+
+export async function saveDraftLocally(dateKey: string, ciphertext: string, iv: string): Promise<void> {
+  const db = await openVaultDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([DRAFTS_STORE], "readwrite");
+    const store = transaction.objectStore(DRAFTS_STORE);
+    const request = store.put({ ciphertext, iv }, dateKey);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject("Failed to save draft locally");
+  });
+}
+
+export async function getLocalDraft(dateKey: string): Promise<{ ciphertext: string, iv: string } | null> {
+  const db = await openVaultDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([DRAFTS_STORE], "readonly");
+    const store = transaction.objectStore(DRAFTS_STORE);
+    const request = store.get(dateKey);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject("Failed to read draft locally");
+  });
+}
+
+export async function clearLocalDraft(dateKey: string): Promise<void> {
+  const db = await openVaultDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([DRAFTS_STORE], "readwrite");
+    const store = transaction.objectStore(DRAFTS_STORE);
+    const request = store.delete(dateKey);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject("Failed to delete draft locally");
+  });
+}
