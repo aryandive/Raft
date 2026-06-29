@@ -1,11 +1,16 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useTelemetry, type TelemetryPoint } from "@/hooks/useTelemetry"; // Adjust path to @/utils/useTelemetry if needed
+import { getEmotionFromCoords } from "@/utils/emotionEngine";
 import { 
   Activity, 
   MapPin, 
   RefreshCw, 
-  ShieldCheck 
+  ShieldCheck,
+  X,
+  BookOpen,
+  Check
 } from "lucide-react";
 
 interface Coordinates {
@@ -16,7 +21,41 @@ interface Coordinates {
 export default function TelemetryPage() {
   const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
   const [isLocked, setIsLocked] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [comment, setComment] = useState("");
+  const [todayLogs, setTodayLogs] = useState<TelemetryPoint[]>([]);
+  const [savedVaults, setSavedVaults] = useState<Record<string, boolean>>({});
   const gridRef = useRef<HTMLDivElement>(null);
+  const { handleLogMood, fetchTodayLogs, handleDeleteMood, bridgeToVault } = useTelemetry();
+
+  const handleVaultBridge = async (log: TelemetryPoint, emotion: string) => {
+    try {
+      await bridgeToVault(log, emotion);
+      setSavedVaults(prev => ({ ...prev, [log.timestamp]: true }));
+      setTimeout(() => {
+        setSavedVaults(prev => ({ ...prev, [log.timestamp]: false }));
+      }, 3000);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleLogDelete = async (timestamp: string) => {
+    try {
+      await handleDeleteMood(timestamp);
+      setTodayLogs(prev => prev.filter(l => l.timestamp !== timestamp));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    const loadLogs = async () => {
+      const logs = await fetchTodayLogs();
+      setTodayLogs(logs);
+    };
+    loadLogs();
+  }, [fetchTodayLogs]);
 
   // Core coordinate updates (clamped and mapped to [-1.000, 1.000])
   const updateCoordinates = useCallback((clientX: number, clientY: number) => {
@@ -307,16 +346,50 @@ export default function TelemetryPage() {
 
             {/* Lock/Submit controls */}
             <div className="mt-8 pt-4">
+              {coordinates && !isLocked && (
+                <input
+                  type="text"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Add an optional comment..."
+                  className="w-full bg-transparent border-b border-white/10 outline-none text-slate-300 placeholder:text-slate-600 font-mono text-sm py-2 mb-4"
+                />
+              )}
               {coordinates ? (
                 <button
-                  onClick={() => setIsLocked(!isLocked)}
-                  className={`w-full py-3.5 rounded-xl border font-mono text-xs uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer ${
+                  onClick={async () => {
+                    if (isLocked) {
+                      setIsLocked(false);
+                      return;
+                    }
+                    setIsSubmitting(true);
+                    try {
+                      await handleLogMood(coordinates.x, coordinates.y, comment);
+                      setComment("");
+                      const logs = await fetchTodayLogs();
+                      setTodayLogs(logs);
+                      setIsLocked(true);
+                    } catch (err) {
+                      console.error(err);
+                    } finally {
+                      setIsSubmitting(false);
+                    }
+                  }}
+                  disabled={isSubmitting}
+                  className={`w-full py-3.5 rounded-xl border font-mono text-xs uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 ${
+                    isSubmitting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+                  } ${
                     isLocked
                       ? "bg-[#81b29a]/10 border-[#81b29a]/30 text-[#81b29a]"
                       : "bg-[#818cf8]/10 border-[#818cf8]/20 text-[#818cf8] hover:bg-[#818cf8]/20 active:scale-[0.98]"
                   }`}
                 >
-                  {isLocked ? (
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      Saving...
+                    </>
+                  ) : isLocked ? (
                     <>
                       <ShieldCheck size={14} />
                       Telemetry Locked
@@ -324,7 +397,7 @@ export default function TelemetryPage() {
                   ) : (
                     <>
                       <MapPin size={14} />
-                      Lock Telemetry Coords
+                      Log Telemetry Coords
                     </>
                   )}
                 </button>
@@ -336,6 +409,55 @@ export default function TelemetryPage() {
                   <MapPin size={14} className="opacity-25" />
                   Drop Pin on Grid
                 </button>
+              )}
+              
+              {/* History List */}
+              {todayLogs.length > 0 && (
+                <div className="mt-6 flex flex-col gap-3 max-h-40 overflow-y-auto pr-2">
+                  <div className="text-[10px] font-mono text-[#faf9f6]/40 uppercase tracking-widest border-b border-white/5 pb-2 mb-2">Today&apos;s Logs</div>
+                  {todayLogs.map((log, idx) => {
+                    const dateObj = new Date(log.timestamp);
+                    const formattedDate = dateObj.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                    const formattedTime = dateObj.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+                    const dateTimeString = `${formattedDate} • ${formattedTime}`;
+                    const emotion = getEmotionFromCoords(log.x, log.y);
+                    
+                    return (
+                      <div key={idx} className="flex flex-col gap-1.5 text-xs font-mono text-slate-400 bg-black/25 p-3 rounded-lg border border-white/5">
+                        <div className="flex justify-between items-start">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-slate-200 font-semibold">{emotion}</span>
+                            <span className="text-[10px] opacity-60">{dateTimeString}</span>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[10px] opacity-60 whitespace-nowrap pt-0.5">X: {log.x.toFixed(2)} | Y: {log.y.toFixed(2)}</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <button 
+                                onClick={() => handleVaultBridge(log, emotion)}
+                                className="text-slate-500 hover:text-[#818cf8] transition-colors cursor-pointer"
+                                title="Send to Vault"
+                              >
+                                {savedVaults[log.timestamp] ? (
+                                  <Check size={12} className="text-[#81b29a] animate-pulse" />
+                                ) : (
+                                  <BookOpen size={12} />
+                                )}
+                              </button>
+                              <button 
+                                onClick={() => handleLogDelete(log.timestamp)}
+                                className="text-slate-500 hover:text-[#e07a5f] transition-colors cursor-pointer"
+                                title="Delete Log"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        {log.comment && <div className="text-[#faf9f6]/70 text-xs mt-1">{log.comment}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
 
