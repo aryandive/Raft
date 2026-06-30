@@ -1,6 +1,6 @@
 // utils/crypto.ts
 
-const DB_NAME = 'RaftVaultDB';
+const DB_NAME = 'RaftCryptoKeysDB';
 const STORE_NAME = 'crypto_keys';
 const DRAFTS_STORE = 'drafts';
 const KEY_ID = 'master_aes_key';

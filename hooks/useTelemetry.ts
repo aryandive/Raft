@@ -1,208 +1,110 @@
 import { useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
-import { getLocalMasterKey, encryptPayload, decryptPayload } from '@/utils/crypto';
+import { db, pruneOldData } from '@/lib/db';
+import { useAuthStore } from '@/store/useAuthStore';
 import { z } from 'zod';
 
-export const TelemetryPointSchema = z.object({
-  x: z.number(),
-  y: z.number(),
-  timestamp: z.string(), // ISO format
-  comment: z.string().optional()
+// Strict Zod validation for data pulled out of Dexie/Supabase
+const TelemetryLogSchema = z.object({
+  date: z.string(),
+  encryptedPayload: z.string(),
 });
 
-export const TelemetryArraySchema = z.array(TelemetryPointSchema);
+const TelemetryLogArraySchema = z.array(TelemetryLogSchema);
 
-export type TelemetryPoint = z.infer<typeof TelemetryPointSchema>;
+export type EncryptedTelemetryLog = z.infer<typeof TelemetryLogSchema>;
 
 export function useTelemetry() {
   const supabase = createClient();
+  const { session, isPremium } = useAuthStore();
 
-  const fetchTodayLogs = useCallback(async (): Promise<TelemetryPoint[]> => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return [];
-
-      const today = new Date().toISOString().split('T')[0];
-
-      const { data, error } = await supabase
-        .from('telemetry_logs')
-        .select('encrypted_payload, iv')
-        .eq('user_id', user.id)
-        .eq('entry_date', today)
-        .maybeSingle();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error("Fetch error", error);
-        return [];
-      }
-
-      if (!data) return [];
-
-      const masterKey = await getLocalMasterKey();
-      if (!masterKey) throw new Error("Master key not found");
-
-      const decryptedStr = await decryptPayload(data.encrypted_payload, data.iv, masterKey);
-      const parsedArray = JSON.parse(decryptedStr);
+  const saveTelemetryLog = useCallback(async (date: string, encryptedPayload: string) => {
+    if (!isPremium) {
+      // Free tier logic: Save locally and prune
+      await db.telemetryLogs.put({ date, encryptedPayload });
+      await pruneOldData();
+    } else {
+      // Premium tier logic: Push to Supabase
+      if (!session?.user?.id) throw new Error("User not authenticated");
       
-      return TelemetryArraySchema.parse(parsedArray);
-    } catch (err) {
-      console.error("Failed to fetch today's logs", err);
-      return [];
-    }
-  }, [supabase]);
+      const { error } = await supabase
+        .from('telemetry_logs')
+        .upsert({
+          user_id: session.user.id,
+          date,
+          encrypted_payload: encryptedPayload
+        }, { onConflict: 'user_id, date' });
 
-  const handleLogMood = async (x: number, y: number, comment?: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("User not authenticated");
-
-    const masterKey = await getLocalMasterKey();
-    if (!masterKey) throw new Error("Master key not found in local vault");
-
-    const newPoint: TelemetryPoint = {
-      x,
-      y,
-      timestamp: new Date().toISOString(),
-      ...(comment ? { comment } : {})
-    };
-
-    const today = new Date().toISOString().split('T')[0];
-
-    // Fetch existing first to append
-    let currentLogs: TelemetryPoint[] = [];
-    const { data: existingData, error: fetchError } = await supabase
-      .from('telemetry_logs')
-      .select('encrypted_payload, iv')
-      .eq('user_id', user.id)
-      .eq('entry_date', today)
-      .maybeSingle();
-
-    if (!fetchError && existingData) {
-      try {
-        const decryptedStr = await decryptPayload(existingData.encrypted_payload, existingData.iv, masterKey);
-        currentLogs = TelemetryArraySchema.parse(JSON.parse(decryptedStr));
-      } catch (err) {
-        console.error("Failed to parse existing payload, starting fresh", err);
+      if (error) {
+        console.error("Failed to save to Supabase", error);
+        throw error;
       }
     }
+  }, [isPremium, session, supabase]);
 
-    currentLogs.push(newPoint);
+  const loadTelemetryLogs = useCallback(async (): Promise<EncryptedTelemetryLog[]> => {
+    if (!isPremium) {
+      // Free tier: read purely from Dexie
+      const localData = await db.telemetryLogs.toArray();
+      return TelemetryLogArraySchema.parse(localData);
+    } else {
+      // Premium tier: Merge & Flush
+      if (!session?.user?.id) throw new Error("User not authenticated");
 
-    // Encrypt updated array
-    const plaintext = JSON.stringify(currentLogs);
-    const { ciphertext, iv } = await encryptPayload(plaintext, masterKey);
-
-    // Upsert to supabase
-    const { error: upsertError } = await supabase
-      .from('telemetry_logs')
-      .upsert({
-        user_id: user.id,
-        entry_date: today,
-        encrypted_payload: ciphertext,
-        iv,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id, entry_date' });
-
-    if (upsertError) {
-      throw upsertError;
-    }
-  };
-
-  const handleDeleteMood = async (timestampToDelete: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("User not authenticated");
-
-    const masterKey = await getLocalMasterKey();
-    if (!masterKey) throw new Error("Master key not found");
-
-    const today = new Date().toISOString().split('T')[0];
-
-    const { data: existingData, error: fetchError } = await supabase
-      .from('telemetry_logs')
-      .select('encrypted_payload, iv')
-      .eq('user_id', user.id)
-      .eq('entry_date', today)
-      .maybeSingle();
-
-    if (fetchError || !existingData) return;
-
-    let currentLogs: TelemetryPoint[] = [];
-    try {
-      const decryptedStr = await decryptPayload(existingData.encrypted_payload, existingData.iv, masterKey);
-      currentLogs = TelemetryArraySchema.parse(JSON.parse(decryptedStr));
-    } catch (err) {
-      console.error("Failed to decrypt for deletion", err);
-      return;
-    }
-
-    const updatedLogs = currentLogs.filter(log => log.timestamp !== timestampToDelete);
-
-    const plaintext = JSON.stringify(updatedLogs);
-    const { ciphertext, iv } = await encryptPayload(plaintext, masterKey);
-
-    const { error: upsertError } = await supabase
-      .from('telemetry_logs')
-      .upsert({
-        user_id: user.id,
-        entry_date: today,
-        encrypted_payload: ciphertext,
-        iv,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id, entry_date' });
-
-    if (upsertError) throw upsertError;
-  };
-
-  const bridgeToVault = async (log: TelemetryPoint, emotion: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("User not authenticated");
-
-    const masterKey = await getLocalMasterKey();
-    if (!masterKey) throw new Error("Master key not found");
-
-    const today = new Date().toISOString().split('T')[0];
-    const time = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    const markdownBlock = `### Emotional Log: ${emotion}\n**Time:** ${time}\n**Context:** ${log.comment || "No context provided"}`;
-
-    let currentTitle = `Telemetry Log - ${today}`;
-    let currentContent = "";
-    
-    const { data: journalData, error: journalFetchError } = await supabase
-      .from("journal_entries")
-      .select("encrypted_payload, iv")
-      .eq("user_id", user.id)
-      .eq("entry_date", today)
-      .maybeSingle();
-
-    if (!journalFetchError && journalData) {
-      try {
-        const decryptedStr = await decryptPayload(journalData.encrypted_payload, journalData.iv, masterKey);
-        const parsed = JSON.parse(decryptedStr);
-        currentTitle = parsed.title || currentTitle;
-        currentContent = parsed.content ? `${parsed.content}\n\n` : "";
-      } catch (err) {
-        console.error("Failed to decrypt existing journal, appending to new content", err);
+      // 1. Fetch cloud data
+      const { data: cloudDataRaw, error } = await supabase
+        .from('telemetry_logs')
+        .select('date, encrypted_payload')
+        .eq('user_id', session.user.id);
+        
+      if (error) {
+        console.error("Failed to fetch cloud data", error);
+        throw error;
       }
+
+      const parsedCloudData = cloudDataRaw ? cloudDataRaw.map(row => ({
+        date: row.date,
+        encryptedPayload: row.encrypted_payload
+      })) : [];
+
+      let cloudData = TelemetryLogArraySchema.parse(parsedCloudData);
+
+      // 2. Fetch local data
+      const localDataRaw = await db.telemetryLogs.toArray();
+      const localData = TelemetryLogArraySchema.parse(localDataRaw);
+
+      if (localData.length > 0) {
+        // 3. Push local data to Supabase (Merge)
+        const { error: upsertError } = await supabase
+          .from('telemetry_logs')
+          .upsert(
+            localData.map(log => ({
+              user_id: session.user.id,
+              date: log.date,
+              encrypted_payload: log.encryptedPayload
+            })),
+            { onConflict: 'user_id, date' }
+          );
+
+        if (upsertError) {
+          console.error("Failed to sync local data to Supabase", upsertError);
+          throw upsertError;
+        }
+
+        // 4. Delete the local data (Flush) to prevent split-brain
+        await db.telemetryLogs.clear();
+        
+        // Replace overlapping cloud data with the synced local data
+        const mergedData = [
+          ...cloudData.filter(c => !localData.some(l => l.date === c.date)),
+          ...localData
+        ];
+        cloudData = mergedData;
+      }
+
+      return cloudData;
     }
+  }, [isPremium, session, supabase]);
 
-    const updatedContent = currentContent + markdownBlock;
-    const rawData = JSON.stringify({ title: currentTitle, content: updatedContent });
-    const { ciphertext, iv } = await encryptPayload(rawData, masterKey);
-
-    const { error: upsertError } = await supabase
-      .from("journal_entries")
-      .upsert(
-        { 
-          user_id: user.id,
-          encrypted_payload: ciphertext, 
-          iv,
-          entry_date: today
-        },
-        { onConflict: 'user_id, entry_date' }
-      );
-
-    if (upsertError) throw upsertError;
-  };
-
-  return { handleLogMood, fetchTodayLogs, handleDeleteMood, bridgeToVault };
+  return { saveTelemetryLog, loadTelemetryLogs };
 }

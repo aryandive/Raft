@@ -47,6 +47,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link 
                 key={item.href} 
                 href={item.href}
+                prefetch={true}
                 className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:p-3 rounded-xl transition-all ${
                   isActive 
                     ? "bg-[#818cf8]/10 text-[#818cf8] md:border md:border-[#818cf8]/20" 
@@ -64,6 +65,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="hidden md:flex flex-col gap-3 mt-10">
           <Link
             href="/dashboard/grounding"
+            prefetch={true}
             className="flex items-center gap-3 p-3 rounded-xl bg-[#e07a5f]/10 text-[#e07a5f] border border-[#e07a5f]/20 hover:bg-[#e07a5f]/20 transition-all font-medium text-sm group"
           >
             <AlertTriangle size={18} className="group-hover:animate-pulse" />
