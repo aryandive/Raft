@@ -39,9 +39,7 @@ export async function updateSession(request: NextRequest) {
 
   // Unauthenticated users trying to access protected routes -> redirect to /auth
   const isProtectedRoute = pathname.startsWith('/dashboard') || 
-                           pathname.startsWith('/workspace') ||
-                           pathname === '/onboarding/vault' ||
-                           pathname === '/onboarding/restore';
+                           pathname.startsWith('/workspace');
                            
   if (!user && isProtectedRoute) {
     const url = request.nextUrl.clone();
@@ -50,7 +48,6 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Authenticated users accessing public/calibration routes -> redirect to /dashboard
-  // BUT allow them to access /onboarding/vault and /onboarding/restore
   const isPublicOrCalibration = pathname === '/' || 
                                 pathname === '/auth' || 
                                 pathname === '/onboarding/calibration';

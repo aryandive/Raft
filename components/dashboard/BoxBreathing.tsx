@@ -1,3 +1,4 @@
+"use client";
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 
@@ -28,7 +29,7 @@ export function BoxBreathing() {
   const { text, count } = getPhase();
 
   // Framer motion variants to handle CSS hardware accelerated transforms without CLS
-  const circleVariants = {
+  const circleVariants: any = {
     active: {
       scale: [1, 1.5, 1.5, 1, 1],
       opacity: [1, 1, 0.4, 1, 1, 1, 0.4, 1],

@@ -5,6 +5,8 @@ import { Moon, Sun, Wind, Timer, Activity, Shield, Lock, BookOpen, Leaf, Eye, Da
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 
+//  main page
+
 export default function RaftLandingPage() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [scrolled, setScrolled] = useState(false);

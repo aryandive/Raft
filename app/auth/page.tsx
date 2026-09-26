@@ -38,7 +38,12 @@ export default function AuthPage() {
         return;
       }
       
-      router.push("/onboarding/vault");
+      // Auto-generate and store key for new users
+      const { generateMasterKey, storeLocalMasterKey } = await import("@/utils/crypto");
+      const newKey = await generateMasterKey();
+      await storeLocalMasterKey(newKey);
+      
+      router.push("/dashboard");
     } else {
       // Supabase Signin Integration
       const { error } = await supabase.auth.signInWithPassword({
@@ -54,10 +59,13 @@ export default function AuthPage() {
       
       const localKey = await getLocalMasterKey();
       if (!localKey) {
-        router.push('/onboarding/restore'); // Key missing from IndexedDB -> Restore
-      } else {
-        router.push('/dashboard'); // Key exists locally -> Send to Sanctuary
+        // Auto-generate key if missing (note: old data won't be decryptable)
+        const { generateMasterKey, storeLocalMasterKey } = await import("@/utils/crypto");
+        const newKey = await generateMasterKey();
+        await storeLocalMasterKey(newKey);
       }
+      
+      router.push('/dashboard');
     }
   };
 
