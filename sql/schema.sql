@@ -54,7 +54,11 @@ CREATE TABLE journal_entries (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES auth.users ON DELETE CASCADE NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  encrypted_content TEXT NOT NULL
+  entry_date TEXT NOT NULL,
+  encrypted_payload TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  event_type TEXT DEFAULT 'manual_note' NOT NULL,
+  metadata JSONB DEFAULT '{}'::jsonb NOT NULL
 );
 
 -- RLS for journal_entries

@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence, Variants } from "framer-motion";
+import { useVaultStream } from "@/hooks/useVaultStream";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 type Phase = "inhale" | "holdFull" | "exhale" | "holdEmpty";
 
@@ -46,9 +49,13 @@ const orbVariants: Variants = {
 export default function GroundingPage() {
   const [phase, setPhase] = useState<Phase>("inhale");
   const [mounted, setMounted] = useState(false);
+  const [sessionStartTime, setSessionStartTime] = useState<number>(0);
+  const { logEvent, isLogging } = useVaultStream();
+  const router = useRouter();
 
   useEffect(() => {
     setMounted(true);
+    setSessionStartTime(Date.now());
     let isMounted = true;
 
     const runBreathingCycle = async () => {
@@ -129,6 +136,37 @@ export default function GroundingPage() {
             </motion.span>
           </AnimatePresence>
         </div>
+      </div>
+
+      {/* SECTION 2.5: Finish Session */}
+      <div className="mt-12 z-20">
+        <button
+          onClick={async () => {
+            const durationSecs = Math.floor((Date.now() - sessionStartTime) / 1000);
+            try {
+              await logEvent({
+                eventType: 'breathing_session',
+                metadata: {
+                  activityName: "Box Breathing",
+                  sessionDuration: durationSecs,
+                  delta: "Neutral" // Or ask for a delta beforehand
+                }
+              });
+              router.push("/dashboard/vault");
+            } catch (err) {
+              console.error(err);
+              alert("Failed to log session. Are you logged in?");
+            }
+          }}
+          disabled={isLogging}
+          className="px-8 py-4 bg-soft-indigo text-[#0f172a] rounded-full font-semibold tracking-wide hover:bg-indigo-400 transition-colors flex items-center justify-center shadow-[0_0_20px_rgba(129,140,248,0.3)] disabled:opacity-50"
+        >
+          {isLogging ? (
+            <><Loader2 className="animate-spin mr-2" size={18} /> Logging to Vault...</>
+          ) : (
+            "Complete Session & Log"
+          )}
+        </button>
       </div>
 
       {/* SECTION 3: The Safety Layer (Crisis Fallback) */}
